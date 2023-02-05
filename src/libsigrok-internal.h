@@ -1994,6 +1994,8 @@ SR_PRIV int serial_stream_detect(struct sr_serial_dev_inst *serial,
 		size_t packet_size, packet_valid_callback is_valid,
 		packet_valid_len_callback is_valid_len, size_t *return_size,
 		uint64_t timeout_ms);
+SR_PRIV int sr_serial_extract_options(GSList *options, const char **serial_device,
+									  const char **serial_options);
 SR_PRIV int serial_source_add(struct sr_session *session,
 		struct sr_serial_dev_inst *serial, int events, int timeout,
 		sr_receive_data_callback cb, void *cb_data);
@@ -2119,9 +2121,15 @@ SR_PRIV int sr_bt_check_notify(struct sr_bt_desc *desc);
 #ifdef HAVE_LIBUSB_1_0
 SR_PRIV int ezusb_reset(struct libusb_device_handle *hdl, int set_clear);
 SR_PRIV int ezusb_install_firmware(struct sr_context *ctx, libusb_device_handle *hdl,
-				   const char *name, gboolean fx3);
+				   const char *name);
 SR_PRIV int ezusb_upload_firmware(struct sr_context *ctx, libusb_device *dev,
-				  int configuration, const char *name, gboolean fx3);
+				  int configuration, const char *name);
+SR_PRIV int ezusb_upload_firmware_fx3(struct sr_context *ctx, libusb_device *dev,
+									  int configuration, const char *name);
+SR_PRIV int ezusb_install_firmware_fx3(struct sr_context *ctx, libusb_device_handle *hdl,
+									   const char *name);
+SR_PRIV int ezusb_fx3_ram_write(libusb_device_handle *hdl, unsigned char *buf,
+								unsigned int ramAddress, int len);
 #endif
 
 /*--- usb.c -----------------------------------------------------------------*/
@@ -2146,7 +2154,7 @@ SR_PRIV gboolean usb_match_manuf_prod(libusb_device *dev,
 enum binary_value_type {
 	BVT_INVALID,
 
-	BVT_UINT8,
+	BVT_UINT8 = 0,
 	BVT_BE_UINT8 = BVT_UINT8,
 	BVT_LE_UINT8 = BVT_UINT8,
 

@@ -1017,7 +1017,7 @@ SR_PRIV int la2016_upload_firmware(const struct sr_dev_inst *sdi,
 	if (skip_upload)
 		ret = SR_OK;
 	else
-		ret = ezusb_upload_firmware(sr_ctx, dev, USB_CONFIGURATION, fw,FALSE);
+		ret = ezusb_upload_firmware(sr_ctx, dev, USB_CONFIGURATION, fw);
 	g_free(fw);
 	if (ret != SR_OK)
 		return ret;

@@ -1,8 +1,7 @@
 /*
  * This file is part of the libsigrok project.
  *
- * Copyright (C) 2013 Bert Vermeulen <bert@biot.com>
- * Copyright (C) 2012 Joel Holdsworth <joel@airwebreathe.org.uk>
+ * Copyright (C) 2021 Ashwin Nair <ashwin.nair@infineon.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,9 +30,7 @@ struct version_info {
 };
 
 struct cmd_start_acquisition {
-	uint8_t flags;
-	uint8_t sample_delay_h;
-	uint8_t sample_delay_l;
+	uint16_t sampling_factor;
 };
 
 #pragma pack(pop)
@@ -82,7 +79,7 @@ static int command_start_acquisition(const struct sr_dev_inst *sdi)
 	struct sr_usb_dev_inst *usb;
 	uint64_t samplerate;
 	struct cmd_start_acquisition cmd;
-	int delay, ret;
+	int ret;
 
 	devc = sdi->priv;
 	usb = sdi->conn;
@@ -95,36 +92,9 @@ static int command_start_acquisition(const struct sr_dev_inst *sdi)
 		return SR_ERR;
 	}
 
-	delay = 0;
-	cmd.flags = cmd.sample_delay_h = cmd.sample_delay_l = 0;
-	if ((SR_MHZ(48) % samplerate) == 0) {
-		cmd.flags = CMD_START_FLAGS_CLK_48MHZ;
-		delay = SR_MHZ(48) / samplerate - 1;
-		if (delay > MAX_SAMPLE_DELAY)
-			delay = 0;
-	}
-
-	if (delay == 0 && (SR_MHZ(30) % samplerate) == 0) {
-		cmd.flags = CMD_START_FLAGS_CLK_30MHZ;
-		delay = SR_MHZ(30) / samplerate - 1;
-	}
-
-	sr_dbg("GPIF delay = %d, clocksource = %sMHz.", delay,
-		(cmd.flags & CMD_START_FLAGS_CLK_48MHZ) ? "48" : "30");
-
-	if (delay < 0 || delay > MAX_SAMPLE_DELAY) {
-		sr_err("Unable to sample at %" PRIu64 "Hz.", samplerate);
-		return SR_ERR;
-	}
-
-	cmd.sample_delay_h = (delay >> 8) & 0xff;
-	cmd.sample_delay_l = delay & 0xff;
-
-	/* Select the sampling width. */
-	cmd.flags |= devc->sample_wide ? CMD_START_FLAGS_SAMPLE_16BIT :
-		CMD_START_FLAGS_SAMPLE_8BIT;
-	/* Enable CTL2 clock. */
-	cmd.flags |= (g_slist_length(devc->enabled_analog_channels) > 0) ? CMD_START_FLAGS_CLK_CTL2 : 0;
+	cmd.sampling_factor = (FX3_PIB_CLOCK)/(samplerate);
+	
+	sr_spew("cmd.sampling_factor = %d",cmd.sampling_factor);
 
 	/* Send the control message. */
 	ret = libusb_control_transfer(usb->devhdl, LIBUSB_REQUEST_TYPE_VENDOR |
@@ -134,12 +104,14 @@ static int command_start_acquisition(const struct sr_dev_inst *sdi)
 		sr_err("Unable to send start command: %s.",
 		       libusb_error_name(ret));
 		return SR_ERR;
+	}else{
+		sr_info("CMD_START vendor command sent successfully");
 	}
 
 	return SR_OK;
 }
 
-SR_PRIV int fx2lafw_dev_open(struct sr_dev_inst *sdi, struct sr_dev_driver *di)
+SR_PRIV int cypress_fx3_dev_open(struct sr_dev_inst *sdi, struct sr_dev_driver *di)
 {
 	libusb_device **devlist;
 	struct sr_usb_dev_inst *usb;
@@ -168,20 +140,25 @@ SR_PRIV int fx2lafw_dev_open(struct sr_dev_inst *sdi, struct sr_dev_driver *di)
 		if (des.idVendor != devc->profile->vid
 		    || des.idProduct != devc->profile->pid)
 			continue;
-
+				
 		if ((sdi->status == SR_ST_INITIALIZING) ||
 				(sdi->status == SR_ST_INACTIVE)) {
+
 			/*
 			 * Check device by its physical USB bus/port address.
-			 */
+			 */		
 			if (usb_get_port_path(devlist[i], connection_id, sizeof(connection_id)) < 0)
+			{
 				continue;
+			}
 
 			if (strcmp(sdi->connection_id, connection_id))
+			{
 				/* This is not the one. */
 				continue;
+			}
 		}
-
+		
 		if (!(ret = libusb_open(devlist[i], &usb->devhdl))) {
 			if (usb->address == 0xff)
 				/*
@@ -195,7 +172,7 @@ SR_PRIV int fx2lafw_dev_open(struct sr_dev_inst *sdi, struct sr_dev_driver *di)
 			ret = SR_ERR;
 			break;
 		}
-
+		
 		if (libusb_has_capability(LIBUSB_CAP_SUPPORTS_DETACH_KERNEL_DRIVER)) {
 			if (libusb_kernel_driver_active(usb->devhdl, USB_INTERFACE) == 1) {
 				if ((ret = libusb_detach_kernel_driver(usb->devhdl, USB_INTERFACE)) < 0) {
@@ -224,9 +201,9 @@ SR_PRIV int fx2lafw_dev_open(struct sr_dev_inst *sdi, struct sr_dev_driver *di)
 		 * bail out if we encounter an incompatible version.
 		 * Different minor versions are OK, they should be compatible.
 		 */
-		if (vi.major != FX2LAFW_REQUIRED_VERSION_MAJOR) {
+		if (vi.major != FX3_REQUIRED_VERSION_MAJOR) {
 			sr_err("Expected firmware version %d.x, "
-			       "got %d.%d.", FX2LAFW_REQUIRED_VERSION_MAJOR,
+			       "got %d.%d.", FX3_REQUIRED_VERSION_MAJOR,
 			       vi.major, vi.minor);
 			break;
 		}
@@ -236,26 +213,23 @@ SR_PRIV int fx2lafw_dev_open(struct sr_dev_inst *sdi, struct sr_dev_driver *di)
 			usb->bus, usb->address, connection_id,
 			USB_INTERFACE, vi.major, vi.minor);
 
-		sr_info("Detected REVID=%d, it's a Cypress CY7C68013%s.",
-			revid, (revid != 1) ? " (FX2)" : "A (FX2LP)");
+		sr_info("Detected REVID, it's a Cypress FX3!\n");
 
 		ret = SR_OK;
 
 		break;
 	}
-
 	libusb_free_device_list(devlist, 1);
 
 	return ret;
 }
 
-SR_PRIV struct dev_context *fx2lafw_dev_new(void)
+SR_PRIV struct dev_context *cypress_fx3_dev_new(void)
 {
 	struct dev_context *devc;
 
 	devc = g_malloc0(sizeof(struct dev_context));
 	devc->profile = NULL;
-	devc->channel_names = NULL;
 	devc->fw_updated = 0;
 	devc->cur_samplerate = 0;
 	devc->limit_frames = 1;
@@ -268,7 +242,7 @@ SR_PRIV struct dev_context *fx2lafw_dev_new(void)
 	return devc;
 }
 
-SR_PRIV void fx2lafw_abort_acquisition(struct dev_context *devc)
+SR_PRIV void cypress_fx3_abort_acquisition(struct dev_context *devc)
 {
 	int i;
 
@@ -442,7 +416,7 @@ static void LIBUSB_CALL receive_transfer(struct libusb_transfer *transfer)
 
 	switch (transfer->status) {
 	case LIBUSB_TRANSFER_NO_DEVICE:
-		fx2lafw_abort_acquisition(devc);
+		cypress_fx3_abort_acquisition(devc);
 		free_transfer(transfer);
 		return;
 	case LIBUSB_TRANSFER_COMPLETED:
@@ -460,7 +434,7 @@ static void LIBUSB_CALL receive_transfer(struct libusb_transfer *transfer)
 			 * The FX2 gave up. End the acquisition, the frontend
 			 * will work out that the samplecount is short.
 			 */
-			fx2lafw_abort_acquisition(devc);
+			cypress_fx3_abort_acquisition(devc);
 			free_transfer(transfer);
 		} else {
 			resubmit_transfer(transfer);
@@ -530,7 +504,7 @@ check_trigger:
 		}
 	}
 	if (frame_ended && final_frame) {
-		fx2lafw_abort_acquisition(devc);
+		cypress_fx3_abort_acquisition(devc);
 		free_transfer(transfer);
 	} else
 		resubmit_transfer(transfer);
@@ -562,10 +536,9 @@ static int configure_channels(const struct sr_dev_inst *sdi)
 	}
 
 	/*
-	 * Use wide sampling if either any of the LA channels 8..15 is enabled,
-	 * and/or at least one analog channel is enabled.
+	 * Use wide sampling as default for now #TODO
 	 */
-	devc->sample_wide = channel_mask > 0xff || num_analog > 0;
+	devc->sample_wide = 1;
 
 	return SR_OK;
 }
@@ -584,7 +557,7 @@ static size_t get_buffer_size(struct dev_context *devc)
 	 * a multiple of 512.
 	 */
 	s = 10 * to_bytes_per_ms(devc->cur_samplerate);
-	return (s + 511) & ~511;
+	return (s + 1023) & ~1023;
 }
 
 static unsigned int get_number_of_transfers(struct dev_context *devc)
@@ -662,6 +635,7 @@ static int start_transfers(const struct sr_dev_inst *sdi)
 	num_transfers = get_number_of_transfers(devc);
 
 	size = get_buffer_size(devc);
+	sr_info("num_transfers: %d, buffer_size: %d", num_transfers,size);
 	devc->submitted_transfers = 0;
 
 	devc->transfers = g_try_malloc0(sizeof(*devc->transfers) * num_transfers);
@@ -687,7 +661,7 @@ static int start_transfers(const struct sr_dev_inst *sdi)
 			       libusb_error_name(ret));
 			libusb_free_transfer(transfer);
 			g_free(buf);
-			fx2lafw_abort_acquisition(devc);
+			cypress_fx3_abort_acquisition(devc);
 			return SR_ERR;
 		}
 		devc->transfers[i] = transfer;
@@ -709,7 +683,7 @@ static int start_transfers(const struct sr_dev_inst *sdi)
 	return SR_OK;
 }
 
-SR_PRIV int fx2lafw_start_acquisition(const struct sr_dev_inst *sdi)
+SR_PRIV int cypress_fx3_start_acquisition(const struct sr_dev_inst *sdi)
 {
 	struct sr_dev_driver *di;
 	struct drv_context *drvc;
@@ -733,9 +707,12 @@ SR_PRIV int fx2lafw_start_acquisition(const struct sr_dev_inst *sdi)
 	}
 
 	timeout = get_timeout(devc);
+
 	usb_source_add(sdi->session, devc->ctx, timeout, receive_data, drvc);
 
 	size = get_buffer_size(devc);
+
+	
 	/* Prepare for analog sampling. */
 	if (g_slist_length(devc->enabled_analog_channels) > 0) {
 		/* We need a buffer half the size of a transfer. */
@@ -745,7 +722,7 @@ SR_PRIV int fx2lafw_start_acquisition(const struct sr_dev_inst *sdi)
 	}
 	start_transfers(sdi);
 	if ((ret = command_start_acquisition(sdi)) != SR_OK) {
-		fx2lafw_abort_acquisition(devc);
+		cypress_fx3_abort_acquisition(devc);
 		return ret;
 	}
 
