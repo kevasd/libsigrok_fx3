@@ -58,7 +58,7 @@
  * @private
  */
 SR_PRIV struct sr_channel *sr_channel_new(struct sr_dev_inst *sdi,
-		int index, int type, gboolean enabled, const char *name)
+		int index, int type, gboolean enabled, const char *name, gboolean fx3)
 {
 	struct sr_channel *ch;
 
@@ -491,7 +491,7 @@ SR_API int sr_dev_inst_channel_add(struct sr_dev_inst *sdi, int index, int type,
 	if (!sdi || sdi->inst_type != SR_INST_USER || index < 0)
 		return SR_ERR_ARG;
 
-	if (!sr_channel_new(sdi, index, type, TRUE, name))
+	if (!sr_channel_new(sdi, index, type, TRUE, name,FALSE))
 		return SR_ERR_DATA;
 
 	return SR_OK;
